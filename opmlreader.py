@@ -2,8 +2,8 @@ import xml.etree.ElementTree as ET
 import os
 import sqlite3
 
-opmlFile = "/Users/karlli/Desktop/subscriptions.xml"
-rssToolDir = "/Users/karlli/Desktop/"
+opmlFile = "/Users/karlli/Desktop/rsstool/subscriptions.xml"
+rssToolDir = "/Users/karlli/Desktop/rsstool/"
 
 def createFeedDBFromOPML(opmlFile, rssToolDir):
 	#load opml
