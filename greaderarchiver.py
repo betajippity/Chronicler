@@ -134,26 +134,29 @@ def openFeedDb(feedXML, rssToolDir):
 	dbc = feedDb.cursor()
 	#check if feeds table exists and create if necessary
 	dbc.execute('''CREATE TABLE IF NOT EXISTS posts ("id" VARCHAR PRIMARY KEY  NOT NULL , "title" TEXT, "url" TEXT, "published" DATETIME, "updated" DATETIME, "content" TEXT)''')
+	#check if images table exists and create if necessary
+	dbc.execute('''CREATE TABLE IF NOT EXISTS images ("image" VARCHAR PRIMARY KEY  NOT NULL , "original" TEXT)''')
 	feedDb.commit()
 	return feedDb
 
 #Adds all entries in a Google Reader archive to a feed database. Optionally will download images too if cacheImages is true
-def addArchiveToFeedDb(feedXML, rssToolDir):
+def addArchiveToFeedDb(feedXML, rssToolDir, cacheImages):
 	#get our feed database
 	feedDb = openFeedDb(feedXML, rssToolDir)
 	#get our archive json
 	xmlfilename = feedXML.replace('http://','').replace('/','_')
 	if xmlfilename[-1]=='_':
 		xmlfilename = xmlfilename[:-1]
-	jd = open(rssToolDir+"feeds/"+xmlfilename+"/archive.json").read()
-	archiveData = json.loads(jd)
-	for entry in reversed(archiveData["items"]):
-		addArchiveEntryToFeedDb(feedXML, feedDb, entry, True, rssToolDir)
+	if os.path.isfile(rssToolDir+"feeds/"+xmlfilename+"/archive.json") == True:
+		jd = open(rssToolDir+"feeds/"+xmlfilename+"/archive.json").read()
+		archiveData = json.loads(jd)
+		for entry in reversed(archiveData["items"]):
+			addArchiveEntryToFeedDb(feedXML, feedDb, entry, cacheImages, rssToolDir)
 	if os.path.isfile(rssToolDir+"feeds/"+xmlfilename+"/archive2.json") == True:
 		jd = open(rssToolDir+"feeds/"+xmlfilename+"/archive2.json").read()
 		archiveData = json.loads(jd)
 		for entry in reversed(archiveData["items"]):
-			addArchiveEntryToFeedDb(feedXML, feedDb, entry, True, rssToolDir)
+			addArchiveEntryToFeedDb(feedXML, feedDb, entry, cacheImages, rssToolDir)
 	feedDb.close()
 
 #Adds a Google Reader archive entry as a post to a feed database. Optionally will download images too if cacheImages is true
@@ -164,57 +167,58 @@ def addArchiveEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolD
 		post=archiveEntry["content"]["content"]
 	elif archiveEntry.has_key("summary"):
 		post=archiveEntry["summary"]["content"]
-	else:
-		print "Error: no content in feed"
-		return
+	title = ""
+	if archiveEntry.has_key("title"):
+		title = archiveEntry["title"]
 	post = urllib.unquote(post)
 	#get ID for post by hashing title with date added to front
-	hashstring = str(archiveEntry["title"].encode('ascii', 'ignore'))+str(post.encode('ascii', 'ignore'))
+	hashstring = str(title.encode('ascii', 'ignore'))+str(post.encode('ascii', 'ignore'))
 	id = hashlib.sha224(hashstring).hexdigest()
-	if cacheImages==True:
-		#setup images dir
-		xmlfilename = feedXML.replace('http://','').replace('/','_')
-		if xmlfilename[-1]=='_':
-			xmlfilename = xmlfilename[:-1]
-		imagedir = rssToolDir+"feeds/"+xmlfilename;
-		if os.path.exists(imagedir+'/images') == False:
-			os.makedirs(imagedir+'/images')
-		#get image URLs
-		h=imgParse()
-		h.clear()
-		h.feed(post)
-		imageLinks = h.imgLinks
-		#download images, rename, and replace image URLs in posts
-		j = 0
-		for image in imageLinks:
-			imagequoted = image
-			image = urllib.unquote(image)
-			targetfile = image.rpartition('/')[2]
-			targetfile = str(j)
-			imageType = ""
-			try:
-				imageType = downloadImage(image, imagedir+"/images/"+str(id)+'_'+targetfile)
-			except IOError:
-				print "Delaying for server to catch up..."
-				time.sleep(5)
-				try:
-					imageType = downloadImage(image, imagedir+"/images/"+str(id)+'_'+targetfile)
-				except IOError:
-					print "Image download failed, skipping..."
-			post = post.replace('src="'+str(imagequoted), urllib.unquote('src="/images/'+str(id)+'_'+targetfile+"."+imageType))
-			post = post.replace("src="+str(imagequoted), urllib.unquote("src='/images/"+str(id)+'_'+targetfile+"."+imageType))
-			j = j+1
-	#package post data into a row for db
-	publishedTime = datetime.fromtimestamp(archiveEntry["published"])
-	updatedTime = datetime.fromtimestamp(archiveEntry["updated"])
-	title = archiveEntry["title"]
-	url = ""
-	if archiveEntry.has_key("alternate"):
-		url = archiveEntry["alternate"][0]["href"]
-	postQuery = (id, title, url, publishedTime, updatedTime, post)
 	#check if post already exists in db and insert if it does not
 	selectedRow = dbc.execute('SELECT * FROM posts WHERE id=?', (id,)).fetchone()
 	if selectedRow == None:
+		if cacheImages==True:
+			#setup images dir
+			xmlfilename = feedXML.replace('http://','').replace('/','_')
+			if xmlfilename[-1]=='_':
+				xmlfilename = xmlfilename[:-1]
+			imagedir = rssToolDir+"feeds/"+xmlfilename;
+			if os.path.exists(imagedir+'/images') == False:
+				os.makedirs(imagedir+'/images')
+			#get image URLs
+			h=imgParse()
+			h.clear()
+			h.feed(post)
+			imageLinks = h.imgLinks
+			#download images, rename, and replace image URLs in posts
+			j = 0
+			for image in imageLinks:
+				imagequoted = image
+				image = urllib.unquote(image)
+				targetfile = image.rpartition('/')[2]
+				targetfile = str(j)
+				imageType = ""
+				try:
+					imageType = downloadImage(image, imagedir+"/images/"+str(id)+'_'+targetfile)
+				except IOError:
+					print "Delaying for server to catch up..."
+					time.sleep(5)
+					try:
+						imageType = downloadImage(image, imagedir+"/images/"+str(id)+'_'+targetfile)
+					except IOError:
+						print "Image download failed, skipping..."
+				post = post.replace('src="'+str(imagequoted), urllib.unquote('src="/images/'+str(id)+'_'+targetfile+"."+imageType))
+				post = post.replace("src="+str(imagequoted), urllib.unquote("src='/images/"+str(id)+'_'+targetfile+"."+imageType))
+				imageQuery = (str(id)+'_'+targetfile+"."+imageType, str(imagequoted))
+				dbc.execute('INSERT INTO images VALUES (?,?)', imageQuery)
+				j = j+1
+		#package post data into a row for db
+		publishedTime = datetime.fromtimestamp(archiveEntry["published"])
+		updatedTime = datetime.fromtimestamp(archiveEntry["updated"])
+		url = ""
+		if archiveEntry.has_key("alternate"):
+			url = archiveEntry["alternate"][0]["href"]
+		postQuery = (id, title, url, publishedTime, updatedTime, post)
 		dbc.execute('INSERT INTO posts VALUES (?,?,?,?,?,?)', postQuery)
 		feedDb.commit()
 		print "Added post with ID "+str(id)+" to db."
@@ -231,14 +235,10 @@ def downloadImage(imageURL, targetFile):
 	imageFile.close()
 	return imageType
 
-opmlFile = "/Users/karlli/Desktop/data/subscriptions.xml"
-rootDir = "/Users/karlli/Desktop/data/"
+#Takes in a subs database and adds all feeds to feed databases and optionally downloads images
+def addAllArchivesToFeedDbs(subsDb, rssToolDir, cacheImages):
+	db = subsDb.cursor()
+	feeds = db.execute('SELECT * FROM feeds').fetchall()
+	for feed in feeds:
+		addArchiveToFeedDb(feed[0], rssToolDir, cacheImages)
 
-#createSubsDbFromOPML(opmlFile, rssToolDir)
-#getAllArchives(openSubsDb(rssToolDir), rssToolDir)
-
-#subsDb = openSubsDb(rssToolDir)
-#addFeedToSubsDb(subsDb, "http://www.theverge.com/rss/index.xml", "http://www.theverge.com/", "The Verge")
-#downloadFeedArchiveFromGReader("http://www.theverge.com/rss/index.xml", rssToolDir)
-#openFeedDb("http://www.theverge.com/rss/index.xml", rssToolDir)
-addArchiveToFeedDb("http://bertrand-benoit.com/blog/feed", rootDir)
