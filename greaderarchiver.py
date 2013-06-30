@@ -191,17 +191,18 @@ def addArchiveEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolD
 			image = urllib.unquote(image)
 			targetfile = image.rpartition('/')[2]
 			targetfile = str(j)
+			imageType = ""
 			try:
-				downloadImage(image, imagedir+"/images/"+str(id)+'_'+targetfile)
+				imageType = downloadImage(image, imagedir+"/images/"+str(id)+'_'+targetfile)
 			except IOError:
 				print "Delaying for server to catch up..."
 				time.sleep(5)
 				try:
-					downloadImage(image, imagedir+"/images/"+str(id)+'_'+targetfile)
+					imageType = downloadImage(image, imagedir+"/images/"+str(id)+'_'+targetfile)
 				except IOError:
 					print "Image download failed, skipping..."
-			post = post.replace('src="'+str(imagequoted), urllib.unquote('src="/images/'+str(id)+'_'+targetfile))
-			post = post.replace("src="+str(imagequoted), urllib.unquote("src='/images/"+str(id)+'_'+targetfile))
+			post = post.replace('src="'+str(imagequoted), urllib.unquote('src="/images/'+str(id)+'_'+targetfile+"."+imageType))
+			post = post.replace("src="+str(imagequoted), urllib.unquote("src='/images/"+str(id)+'_'+targetfile+"."+imageType))
 			j = j+1
 	#package post data into a row for db
 	publishedTime = datetime.fromtimestamp(archiveEntry["published"])
@@ -221,13 +222,14 @@ def addArchiveEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolD
 		i = 0
 		print "Warning: Post with ID "+str(id)+" already exists in db."
 
-#Downloads a given image to the given file
+#Downloads a given image to the given file. Returns the image type.
 def downloadImage(imageURL, targetFile):
 	imageData = urllib.urlopen(imageURL).read()
 	imageType = imghdr.what(None, imageData)
 	imageFile = open(targetFile+"."+imageType, 'w')
 	imageFile.write(imageData)
 	imageFile.close()
+	return imageType
 
 opmlFile = "/Users/karlli/Desktop/data/subscriptions.xml"
 rootDir = "/Users/karlli/Desktop/data/"
@@ -239,4 +241,4 @@ rootDir = "/Users/karlli/Desktop/data/"
 #addFeedToSubsDb(subsDb, "http://www.theverge.com/rss/index.xml", "http://www.theverge.com/", "The Verge")
 #downloadFeedArchiveFromGReader("http://www.theverge.com/rss/index.xml", rssToolDir)
 #openFeedDb("http://www.theverge.com/rss/index.xml", rssToolDir)
-#addArchiveToFeedDb("http://bertrand-benoit.com/blog/feed", rootDir)
+addArchiveToFeedDb("http://bertrand-benoit.com/blog/feed", rootDir)
