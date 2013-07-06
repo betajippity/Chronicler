@@ -117,6 +117,7 @@ def getAllArchives(subsDb, rssToolDir):
 class imgParse(HTMLParser):
     imgLinks = []
     def handle_starttag(self, tag, attrs):
+    	#print attrs
         if tag=="img":
         	if dict(attrs).has_key('src'):
         		self.imgLinks.append(dict(attrs)['src'])
@@ -210,9 +211,6 @@ def addArchiveEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolD
 					except IOError:
 						print "Image download failed, skipping..."
 				if imageType!="404":
-					#safeurl = urllib2.quote('src="'+str(image.encode('utf8')))
-					#post = post.replace(safeurl, urllib.unquote('src="/images/'+str(id)+'_'+targetfile+"."+imageType))
-					#post = post.replace(safeurl, urllib.unquote("src='/images/"+str(id)+'_'+targetfile+"."+imageType))
 					if imageType!=None:
 						imageQuery = (image, str(id)+'_'+targetfile+"."+imageType)
 						selectedImage = dbc.execute('SELECT * FROM images WHERE original=?', (image,)).fetchone()
@@ -221,8 +219,6 @@ def addArchiveEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolD
 						else:
 							print "Warning: Image "+image+" has already been cached."
 					j = j+1
-				else:
-					print "Warning: Image "+image+" could not be found on server."
 		#package post data into a row for db
 		publishedTime = datetime.fromtimestamp(archiveEntry["published"])
 		updatedTime = datetime.fromtimestamp(archiveEntry["updated"])
@@ -241,7 +237,12 @@ def addArchiveEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolD
 def downloadImage(imageURL, targetFile):
 	print "Downloading " + imageURL
 	safeurl = urllib2.quote(str(imageURL.encode('utf8'))).replace("%3A", ":")
-	urlc = urllib.urlopen(safeurl)
+	req = urllib2.Request(safeurl)
+	req.addheaders = [('User-agent', 'Mozilla/5.0')]
+	urlc = urllib2.urlopen(req)
+	if urlc.getcode()==401:
+		print "Warning: " + safeurl +" is password restricted, skipping..."
+		return "404"
 	if urlc.getcode()!=404:
 		imageData = urlc.read()
 		imageType = imghdr.what(None, imageData)
@@ -251,6 +252,7 @@ def downloadImage(imageURL, targetFile):
 			imageFile.close()
 		return imageType
 	else:
+		print "Warning: Image "+image+" could not be found on server."
 		return "404"
 
 #Takes in a subs database and adds all feeds to feed databases and optionally downloads images
