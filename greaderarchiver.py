@@ -9,6 +9,7 @@ from HTMLParser import HTMLParser
 from datetime import datetime
 import hashlib
 import imghdr
+import feedparser
 
 #Takes in a subs database and three strings for feed XML address, feed URL, and feed title, and adds a new feed entry to the given subs database.
 def addFeedToSubsDb(subsDb, feedXML, feedURL, feedTitle):
@@ -174,8 +175,14 @@ def addArchiveEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolD
 	if archiveEntry.has_key("title"):
 		title = HTMLParser().unescape(archiveEntry["title"])
 	post = urllib.unquote(HTMLParser().unescape(post))
+	url = ""
+	if archiveEntry.has_key("alternate"):
+		url = archiveEntry["alternate"][0]["href"]
+	if title=="":
+		if url=="":
+			print "Warning: No title or URL!"
 	#get ID for post by hashing title with date added to front
-	hashstring = str(title.encode('ascii', 'ignore'))+str(post.encode('ascii', 'ignore'))
+	hashstring = str(title.encode('ascii', 'ignore'))+str(url.encode('ascii', 'ignore'))
 	id = hashlib.sha224(hashstring).hexdigest()
 	#check if post already exists in db and insert if it does not
 	selectedRow = dbc.execute('SELECT * FROM posts WHERE id=?', (id,)).fetchone()
@@ -222,16 +229,15 @@ def addArchiveEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolD
 		#package post data into a row for db
 		publishedTime = datetime.fromtimestamp(archiveEntry["published"])
 		updatedTime = datetime.fromtimestamp(archiveEntry["updated"])
-		url = ""
-		if archiveEntry.has_key("alternate"):
-			url = archiveEntry["alternate"][0]["href"]
 		postQuery = (id, title, url, publishedTime, updatedTime, post)
 		dbc.execute('INSERT INTO posts VALUES (?,?,?,?,?,?)', postQuery)
 		feedDb.commit()
 		print "Added post with ID "+str(id)+" to db."
+		return 0
 	else:
 		i = 0
-		print "Warning: Post with ID "+str(id)+" already exists in db."
+		#print "Warning: Post with ID "+str(id)+" already exists in db."
+		return 1
 
 #Downloads a given image to the given file. Returns the image type.
 def downloadImage(imageURL, targetFile):
@@ -260,5 +266,52 @@ def addAllArchivesToFeedDbs(subsDb, rssToolDir, cacheImages):
 	db = subsDb.cursor()
 	feeds = db.execute('SELECT * FROM feeds').fetchall()
 	for feed in feeds:
-		print "Adding posts from "+feed[0]+" to feed database."
+		#print "Adding posts from "+feed[0]+" to feed database."
 		addArchiveToFeedDb(feed[0], rssToolDir, cacheImages)
+
+def updateFeed(feedXML, feedDb, rssToolDir, cacheImages):
+	feed = feedparser.parse(feedXML)
+	entries = {}
+	#print feed
+	if feed["bozo"]==1:
+		print "Error: bad feed"
+	else:
+		i = 0
+		for post in feed["items"]:
+			entry = {}
+			entry["content"] = {}
+			if post.has_key("content"):
+				if post["content"][0].has_key("value"):
+					entry["content"]["content"] = post["content"][0]["value"]
+			elif post.has_key("summary"):
+				entry["content"]["content"] = post["summary"]
+			else:
+				entry["content"]["content"] = ""
+			entry["content"]["content"] = entry["content"]["content"].replace(" />", ">")
+			entry["title"] = ""
+			if post.has_key("title"):
+				entry["title"] = post["title"]
+
+			entry["updated"] = time.mktime(post["updated_parsed"])
+			entry["published"] = entry["updated"]
+			if(post.has_key("published_parsed")):
+				entry["published"] = time.mktime(post["published_parsed"])
+
+			alt = {}
+			alt["href"] = post["link"]
+			entry["alternate"] = []
+			entry["alternate"].append(alt)
+			#print entry["content"]["content"]
+			if addArchiveEntryToFeedDb(feedXML, feedDb, entry, cacheImages, rssToolDir)==0:
+				i=i+1
+		print "Added " + str(i) + " new posts to feed " + feedXML
+
+#Takes in a subs database and adds all feeds to feed databases and optionally downloads images
+def updateAllFeeds(subsDb, rssToolDir, cacheImages):
+	db = subsDb.cursor()
+	feeds = db.execute('SELECT * FROM feeds').fetchall()
+	for feed in feeds:
+		print "Adding new posts from "+feed[0]+" to feed database."
+		feedDb = openFeedDb(feed[0], rssToolDir)
+		updateFeed(feed[0], feedDb, rssToolDir, cacheImages)
+		feedDb.close()
