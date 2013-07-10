@@ -207,17 +207,8 @@ def addArchiveEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolD
 				image = urllib.unquote(image)
 				targetfile = image.rpartition('/')[2]
 				targetfile = str(j)
-				imageType = ""
-				try:
-					imageType = downloadImage(image, imagedir+"/images/"+str(id)+'_'+targetfile)
-				except IOError:
-					print "Delaying for server to catch up..."
-					time.sleep(5)
-					try:
-						imageType = downloadImage(image, imagedir+"/images/"+str(id)+'_'+targetfile)
-					except IOError:
-						print "Image download failed, skipping..."
-				if imageType!="404":
+				imageType = downloadImage(image, imagedir+"/images/"+str(id)+'_'+targetfile)
+				if imageType!="NotAnImage":
 					if imageType!=None:
 						imageQuery = (image, str(id)+'_'+targetfile+"."+imageType)
 						selectedImage = dbc.execute('SELECT * FROM images WHERE original=?', (image,)).fetchone()
@@ -236,37 +227,39 @@ def addArchiveEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolD
 		return 0
 	else:
 		i = 0
-		#print "Warning: Post with ID "+str(id)+" already exists in db."
+		print "Warning: Post with ID "+str(id)+" already exists in db."
 		return 1
 
 #Downloads a given image to the given file. Returns the image type.
 def downloadImage(imageURL, targetFile):
 	print "Downloading " + imageURL
 	safeurl = urllib2.quote(str(imageURL.encode('utf8'))).replace("%3A", ":")
-	req = urllib2.Request(safeurl)
-	req.addheaders = [('User-agent', 'Mozilla/5.0')]
-	urlc = urllib2.urlopen(req)
-	if urlc.getcode()==401:
-		print "Warning: " + safeurl +" is password restricted, skipping..."
-		return "404"
-	if urlc.getcode()!=404:
-		imageData = urlc.read()
-		imageType = imghdr.what(None, imageData)
-		if imageType!=None:
-			imageFile = open(targetFile+"."+imageType, 'w')
-			imageFile.write(imageData)
-			imageFile.close()
-		return imageType
-	else:
-		print "Warning: Image "+image+" could not be found on server."
-		return "404"
+	headers = {'User-Agent' : 'Mozilla/5.0 (Windows NT 6.1) AppleWebKit/535.7 (KHTML, like Gecko) Chrome/16.0.912.77 Safari/535.7'}
+	req = urllib2.Request(safeurl, headers=headers)
+	urlc = None
+	try:
+		urlc = urllib2.urlopen(req)
+	except urllib2.HTTPError as e: 
+		print "Error for"+ imageURL + ":"
+		print e
+		return "NotAnImage"
+	except urllib2.URLError as e:
+		print "Error for"+ imageURL + ":"
+		print e
+		return "NotAnImage"
+	imageData = urlc.read()
+	imageType = imghdr.what(None, imageData)
+	if imageType!=None:
+		imageFile = open(targetFile+"."+imageType, 'w')
+		imageFile.write(imageData)
+		imageFile.close()
+	return imageType
 
 #Takes in a subs database and adds all feeds to feed databases and optionally downloads images
 def addAllArchivesToFeedDbs(subsDb, rssToolDir, cacheImages):
 	db = subsDb.cursor()
 	feeds = db.execute('SELECT * FROM feeds').fetchall()
 	for feed in feeds:
-		#print "Adding posts from "+feed[0]+" to feed database."
 		addArchiveToFeedDb(feed[0], rssToolDir, cacheImages)
 
 def updateFeed(feedXML, feedDb, rssToolDir, cacheImages):
@@ -296,12 +289,10 @@ def updateFeed(feedXML, feedDb, rssToolDir, cacheImages):
 			entry["published"] = entry["updated"]
 			if(post.has_key("published_parsed")):
 				entry["published"] = time.mktime(post["published_parsed"])
-
 			alt = {}
 			alt["href"] = post["link"]
 			entry["alternate"] = []
 			entry["alternate"].append(alt)
-			#print entry["content"]["content"]
 			if addArchiveEntryToFeedDb(feedXML, feedDb, entry, cacheImages, rssToolDir)==0:
 				i=i+1
 		print "Added " + str(i) + " new posts to feed " + feedXML
@@ -315,3 +306,26 @@ def updateAllFeeds(subsDb, rssToolDir, cacheImages):
 		feedDb = openFeedDb(feed[0], rssToolDir)
 		updateFeed(feed[0], feedDb, rssToolDir, cacheImages)
 		feedDb.close()
+
+#Takes in a subs database and checks all feed dbs for broken image entries
+def checkAllFeedDbImages(subsDb, rssToolDir, cacheImages):
+	db = subsDb.cursor()
+	feeds = db.execute('SELECT * FROM feeds').fetchall()
+	for feed in feeds:
+		print "Checking images in feed database for "+feed[0]
+		feedDb = openFeedDb(feed[0], rssToolDir)
+		checkFeedDbImages(feed[0], feedDb, subsDb, rssToolDir)
+		feedDb.close()
+
+#Checks for broken image entries in feed db
+def checkFeedDbImages(feedXML, feedDb, subsDb, rssToolDir):
+	images = feedDb.execute('SELECT * FROM images ORDER BY rowid').fetchall()
+	for image in images:
+		xmlfilename = feedXML.replace('http://','').replace('/','_')
+		if xmlfilename[-1]=='_':
+			xmlfilename = xmlfilename[:-1]
+		imagePath = rssToolDir+"feeds/"+xmlfilename+"/images/"+image[1]
+		if os.path.isfile(imagePath)==False:
+			target = image[1].replace(".","")
+			downloadImage(image[0], "/Users/karlli/Desktop/retest/"+target)
+
