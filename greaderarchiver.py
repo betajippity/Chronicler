@@ -182,14 +182,14 @@ def addArchiveEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolD
 		if url=="":
 			print "Warning: No title or URL!"
 	#get ID for post by hashing title with date added to front
-	hashstring = str(title.encode('ascii', 'ignore'))+str(url.encode('ascii', 'ignore'))
+	hashstring = str(title.encode('ascii', 'ignore'))+str(url.replace('https://','http://').encode('ascii', 'ignore'))
 	id = hashlib.sha224(hashstring).hexdigest()
 	#check if post already exists in db and insert if it does not
 	selectedRow = dbc.execute('SELECT * FROM posts WHERE id=?', (id,)).fetchone()
 	if selectedRow == None:
 		if cacheImages==True:
 			#setup images dir
-			xmlfilename = feedXML.replace('http://','').replace('/','_')
+			xmlfilename = feedXML.replace('http://','').replace('https://','').replace('/','_')
 			if xmlfilename[-1]=='_':
 				xmlfilename = xmlfilename[:-1]
 			imagedir = rssToolDir+"feeds/"+xmlfilename;
@@ -208,6 +208,15 @@ def addArchiveEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolD
 				targetfile = image.rpartition('/')[2]
 				targetfile = str(j)
 				imageType = downloadImage(image, imagedir+"/images/"+str(id)+'_'+targetfile)
+				# try:
+				# 	imageType = downloadImage(image, imagedir+"/images/"+str(id)+'_'+targetfile)
+				# except IOError:
+				# 	print "Delaying for server to catch up..."
+				# 	time.sleep(5)
+				# 	try:
+				# 		imageType = downloadImage(image, imagedir+"/images/"+str(id)+'_'+targetfile)
+				# 	except IOError:
+				# 		print "Image download failed, skipping..."
 				if imageType!="NotAnImage":
 					if imageType!=None:
 						imageQuery = (image, str(id)+'_'+targetfile+"."+imageType)
@@ -227,7 +236,7 @@ def addArchiveEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolD
 		return 0
 	else:
 		i = 0
-		print "Warning: Post with ID "+str(id)+" already exists in db."
+		#print "Warning: Post with ID "+str(id)+" already exists in db."
 		return 1
 
 #Downloads a given image to the given file. Returns the image type.
@@ -240,11 +249,15 @@ def downloadImage(imageURL, targetFile):
 	try:
 		urlc = urllib2.urlopen(req)
 	except urllib2.HTTPError as e: 
-		print "Error for"+ imageURL + ":"
+		print "Error for "+ imageURL + ":"
 		print e
 		return "NotAnImage"
 	except urllib2.URLError as e:
-		print "Error for"+ imageURL + ":"
+		print "Error for "+ imageURL + ":"
+		print e
+		return "NotAnImage"
+	except Exception as e:
+		print "Error for "+ imageURL + ":"
 		print e
 		return "NotAnImage"
 	imageData = urlc.read()
@@ -260,6 +273,7 @@ def addAllArchivesToFeedDbs(subsDb, rssToolDir, cacheImages):
 	db = subsDb.cursor()
 	feeds = db.execute('SELECT * FROM feeds').fetchall()
 	for feed in feeds:
+		#print "Adding posts from "+feed[0]+" to feed database."
 		addArchiveToFeedDb(feed[0], rssToolDir, cacheImages)
 
 def updateFeed(feedXML, feedDb, rssToolDir, cacheImages):
@@ -268,6 +282,7 @@ def updateFeed(feedXML, feedDb, rssToolDir, cacheImages):
 	#print feed
 	if feed["bozo"]==1:
 		print "Error: bad feed"
+		return 0
 	else:
 		i = 0
 		for post in feed["items"]:
@@ -289,23 +304,34 @@ def updateFeed(feedXML, feedDb, rssToolDir, cacheImages):
 			entry["published"] = entry["updated"]
 			if(post.has_key("published_parsed")):
 				entry["published"] = time.mktime(post["published_parsed"])
+
 			alt = {}
 			alt["href"] = post["link"]
 			entry["alternate"] = []
 			entry["alternate"].append(alt)
+			#print entry["content"]["content"]
 			if addArchiveEntryToFeedDb(feedXML, feedDb, entry, cacheImages, rssToolDir)==0:
 				i=i+1
 		print "Added " + str(i) + " new posts to feed " + feedXML
+		return i
 
 #Takes in a subs database and adds all feeds to feed databases and optionally downloads images
 def updateAllFeeds(subsDb, rssToolDir, cacheImages):
 	db = subsDb.cursor()
 	feeds = db.execute('SELECT * FROM feeds').fetchall()
+	addedFeeds = []
 	for feed in feeds:
 		print "Adding new posts from "+feed[0]+" to feed database."
 		feedDb = openFeedDb(feed[0], rssToolDir)
-		updateFeed(feed[0], feedDb, rssToolDir, cacheImages)
+		updates = updateFeed(feed[0], feedDb, rssToolDir, cacheImages)
+		if updates>0:
+			addedFeeds.append("Added "+str(updates)+" new posts to "+feed[0])
 		feedDb.close()
+	print ""
+	print "Update Summary: "+str(len(addedFeeds))+" feeds updated."
+	for feed in addedFeeds:
+		print feed
+	print ""
 
 #Takes in a subs database and checks all feed dbs for broken image entries
 def checkAllFeedDbImages(subsDb, rssToolDir, cacheImages):
@@ -327,5 +353,22 @@ def checkFeedDbImages(feedXML, feedDb, subsDb, rssToolDir):
 		imagePath = rssToolDir+"feeds/"+xmlfilename+"/images/"+image[1]
 		if os.path.isfile(imagePath)==False:
 			target = image[1].replace(".","")
-			downloadImage(image[0], "/Users/karlli/Desktop/retest/"+target)
-
+			result = downloadImage(image[0], rssToolDir+"feeds/"+xmlfilename+"/images/"+target)
+			if result=="NotAnImage":
+				#add broken image to broken image table for possible future re-trying
+				feedDb.execute('''CREATE TABLE IF NOT EXISTS images_broken ("original" TEXT PRIMARY KEY  NOT NULL , "cached" TEXT)''')
+				broken = (image[0], image[1])
+				feedDb.execute('INSERT INTO images_broken VALUES (?,?)', broken)
+				#remove broken entry from main image table
+				updates = {"u1":image[0]}
+				updatequery = "DELETE FROM images WHERE original==:u1"
+				feedDb.execute(updatequery, updates)
+				feedDb.commit()
+				print "Removing broken entry " + image[1] + "from db"
+			else:
+				updates = {"u1":target+"."+result, "u2":image[0]}
+				updatequery = "UPDATE images SET cached==:u1 WHERE original==:u2"
+				feedDb.execute(updatequery, updates)
+				feedDb.commit()
+				print "Successfully fixed missing image " + target+"."+result
+			
