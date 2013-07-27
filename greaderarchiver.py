@@ -16,11 +16,11 @@ def addFeedToSubsDb(subsDb, feedXML, feedURL, feedTitle):
 	db = subsDb.cursor()
 	if feedXML[-1]=='_':
 		feedXML = feedXML[:-1]
-	feedQuery = (feedXML, feedTitle, feedURL)
+	feedQuery = (feedXML, feedTitle, feedURL, False)
 	#check if feed already exists in db and insert if it does not
 	selectedRow = db.execute('SELECT * FROM feeds WHERE feedURL=?', (feedXML,)).fetchone()
 	if selectedRow == None:
-		db.execute('INSERT INTO feeds VALUES (?,?,?)', feedQuery)
+		db.execute('INSERT INTO feeds VALUES (?,?,?,?)', feedQuery)
 		subsDb.commit()
 		print "Added feed "+feedXML+" to database."
 	else:
@@ -42,7 +42,7 @@ def openSubsDb(rssToolDir):
 	subsDb = sqlite3.connect(rssToolDir+'subscriptions.db')
 	dbc = subsDb.cursor()
 	#check if feeds table exists and create if necessary
-	dbc.execute('''CREATE TABLE IF NOT EXISTS feeds ("feedURL" TEXT PRIMARY KEY  NOT NULL , "name" TEXT, "htmlURL" TEXT)''')
+	dbc.execute('''CREATE TABLE IF NOT EXISTS feeds ("feedURL" TEXT PRIMARY KEY  NOT NULL ,"name" TEXT,"htmlURL" TEXT,"full" BOOL DEFAULT (1) )''')
 	subsDb.commit()
 	return subsDb
 
@@ -163,8 +163,12 @@ def addArchiveToFeedDb(feedXML, rssToolDir, cacheImages):
 			addArchiveEntryToFeedDb(feedXML, feedDb, entry, cacheImages, rssToolDir)
 	feedDb.close()
 
-#Adds a Google Reader archive entry as a post to a feed database. Optionally will download images too if cacheImages is true
+
 def addArchiveEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolDir):
+	return addEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolDir, "posts")
+
+#Adds a Google Reader archive entry as a post to a feed database. Optionally will download images too if cacheImages is true
+def addEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolDir, table):
 	dbc = feedDb.cursor()
 	post = ""
 	if archiveEntry.has_key("content"):
@@ -185,7 +189,7 @@ def addArchiveEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolD
 	hashstring = str(title.encode('ascii', 'ignore'))+str(url.replace('https://','http://').encode('ascii', 'ignore'))
 	id = hashlib.sha224(hashstring).hexdigest()
 	#check if post already exists in db and insert if it does not
-	selectedRow = dbc.execute('SELECT * FROM posts WHERE id=?', (id,)).fetchone()
+	selectedRow = dbc.execute('SELECT * FROM '+table+' WHERE id=?', (id,)).fetchone()
 	if selectedRow == None:
 		if cacheImages==True:
 			#setup images dir
@@ -230,9 +234,9 @@ def addArchiveEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolD
 		publishedTime = datetime.fromtimestamp(archiveEntry["published"])
 		updatedTime = datetime.fromtimestamp(archiveEntry["updated"])
 		postQuery = (id, title, url, publishedTime, updatedTime, post)
-		dbc.execute('INSERT INTO posts VALUES (?,?,?,?,?,?)', postQuery)
+		dbc.execute('INSERT INTO '+table+' VALUES (?,?,?,?,?,?)', postQuery)
 		feedDb.commit()
-		print "Added post with ID "+str(id)+" to db."
+		print "Added post with ID "+str(id)+" to db table "+table
 		return 0
 	else:
 		i = 0
@@ -275,45 +279,6 @@ def addAllArchivesToFeedDbs(subsDb, rssToolDir, cacheImages):
 	for feed in feeds:
 		#print "Adding posts from "+feed[0]+" to feed database."
 		addArchiveToFeedDb(feed[0], rssToolDir, cacheImages)
-
-def updateFeed(feedXML, feedDb, rssToolDir, cacheImages):
-	feed = feedparser.parse(feedXML)
-	entries = {}
-	#print feed
-	if feed["bozo"]==1:
-		print "Error: bad feed"
-		return 0
-	else:
-		i = 0
-		for post in feed["items"]:
-			entry = {}
-			entry["content"] = {}
-			if post.has_key("content"):
-				if post["content"][0].has_key("value"):
-					entry["content"]["content"] = post["content"][0]["value"]
-			elif post.has_key("summary"):
-				entry["content"]["content"] = post["summary"]
-			else:
-				entry["content"]["content"] = ""
-			entry["content"]["content"] = entry["content"]["content"].replace(" />", ">")
-			entry["title"] = ""
-			if post.has_key("title"):
-				entry["title"] = post["title"]
-
-			entry["updated"] = time.mktime(post["updated_parsed"])
-			entry["published"] = entry["updated"]
-			if(post.has_key("published_parsed")):
-				entry["published"] = time.mktime(post["published_parsed"])
-
-			alt = {}
-			alt["href"] = post["link"]
-			entry["alternate"] = []
-			entry["alternate"].append(alt)
-			#print entry["content"]["content"]
-			if addArchiveEntryToFeedDb(feedXML, feedDb, entry, cacheImages, rssToolDir)==0:
-				i=i+1
-		print "Added " + str(i) + " new posts to feed " + feedXML
-		return i
 
 #Takes in a subs database and adds all feeds to feed databases and optionally downloads images
 def updateAllFeeds(subsDb, rssToolDir, cacheImages):
@@ -371,4 +336,95 @@ def checkFeedDbImages(feedXML, feedDb, subsDb, rssToolDir):
 				feedDb.execute(updatequery, updates)
 				feedDb.commit()
 				print "Successfully fixed missing image " + target+"."+result
-			
+
+
+def checkFeedDbHTTP(feedXML, feedDb):
+	posts = feedDb.execute('SELECT * FROM posts ORDER BY rowid').fetchall()
+	for post in posts:
+		if "https://" in post[2]:
+			print post[2]
+			print feedXML
+
+def pullEntryFromReadability(apikey, url):
+	apiCall = "https://www.readability.com/api/content/v1/parser?url="+url+"&token="+apikey
+	confidenceCall = "https://www.readability.com/api/content/v1/confidence?url="+url
+	article = json.loads(urllib.urlopen(apiCall).read())
+	confidence = json.loads(urllib.urlopen(confidenceCall).read())
+	print "Pulling from Readability: "+url 
+	if float(confidence["confidence"])<.99:
+		print "Error: article confidence is below 99% ("+url+"); Confidence: "+str(confidence["confidence"])
+		return "ReadabilityFailed"
+	return article
+
+def updateFeed(feedXML, feedDb, rssToolDir, cacheImages):
+	feed = feedparser.parse(feedXML)
+	entries = {}
+	
+	if feed.bozo==1:
+		print type(feed.bozo_exception)
+		if type(feed.bozo_exception)==feedparser.NonXMLContentType:
+			feed.bozo=0
+		if type(feed.bozo_exception)==feedparser.CharacterEncodingOverride:
+			feed.bozo=0
+
+	if feed.bozo==1:
+		print "Error: bad feed"
+		return 0
+	else:
+		i = 0
+		for post in feed["items"]:
+			entry = {}
+			entry["content"] = {}
+			if post.has_key("content"):
+				if post["content"][0].has_key("value"):
+					entry["content"]["content"] = post["content"][0]["value"]
+			elif post.has_key("summary"):
+				entry["content"]["content"] = post["summary"]
+			else:
+				entry["content"]["content"] = ""
+			entry["content"]["content"] = entry["content"]["content"].replace(" />", ">")
+			entry["title"] = ""
+			if post.has_key("title"):
+				entry["title"] = post["title"]
+			entry["updated"]=""
+			if post["updated_parsed"]==None:
+				entry["updated"] = time.mktime(post["published_parsed"])
+			else:
+				entry["updated"] = time.mktime(post["updated_parsed"])
+			entry["published"] = entry["updated"]
+			if(post.has_key("published_parsed")):
+				entry["published"] = time.mktime(post["published_parsed"])
+
+			alt = {}
+			alt["href"] = post["link"]
+			entry["alternate"] = []
+			entry["alternate"].append(alt)
+			#print entry["content"]["content"]
+			if addArchiveEntryToFeedDb(feedXML, feedDb, entry, cacheImages, rssToolDir)==0:
+				i=i+1
+		print "Added " + str(i) + " new posts to feed " + feedXML
+		return i
+
+#Takes a feed database and pull full articles from Readability
+def pullFeedFromReadability(feedXML, feedDb, rssToolDir, cacheImages, apikey):
+	dbc = feedDb.cursor()
+	dbc.execute('''CREATE TABLE IF NOT EXISTS posts_full ("id" VARCHAR PRIMARY KEY  NOT NULL , "title" TEXT, "url" TEXT, "published" DATETIME, "updated" DATETIME, "content" TEXT)''')
+	posts = dbc.execute('SELECT * FROM posts').fetchall()
+	for post in posts:
+		query = (post[0],)
+		alreadyCached = dbc.execute('SELECT * FROM posts_full WHERE id=?', query).fetchall()
+		if len(alreadyCached)==0:
+			postURL = post[2]
+			article = pullEntryFromReadability(apikey, postURL)
+			if article!="ReadabilityFailed":
+				entry = {}
+				entry["content"] = {}
+				entry["content"]["content"] = article["content"]
+				entry["title"] = post[1]
+				entry["updated"] = time.mktime(datetime.strptime(post[4], '%Y-%m-%d %H:%M:%S').timetuple())
+				entry["published"] = time.mktime(datetime.strptime(post[3], '%Y-%m-%d %H:%M:%S').timetuple())
+				alt = {}
+				alt["href"] = post[2]
+				entry["alternate"] = []
+				entry["alternate"].append(alt)
+				addEntryToFeedDb(feedXML, feedDb, entry, cacheImages, rssToolDir, "posts_full")
