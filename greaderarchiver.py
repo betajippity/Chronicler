@@ -10,13 +10,14 @@ from datetime import datetime
 import hashlib
 import imghdr
 import feedparser
+import sys
 
 #Takes in a subs database and three strings for feed XML address, feed URL, and feed title, and adds a new feed entry to the given subs database.
 def addFeedToSubsDb(subsDb, feedXML, feedURL, feedTitle):
 	db = subsDb.cursor()
 	if feedXML[-1]=='_':
 		feedXML = feedXML[:-1]
-	feedQuery = (feedXML, feedTitle, feedURL, False)
+	feedQuery = (feedXML, feedTitle, feedURL, True)
 	#check if feed already exists in db and insert if it does not
 	selectedRow = db.execute('SELECT * FROM feeds WHERE feedURL=?', (feedXML,)).fetchone()
 	if selectedRow == None:
@@ -212,15 +213,6 @@ def addEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolDir, tab
 				targetfile = image.rpartition('/')[2]
 				targetfile = str(j)
 				imageType = downloadImage(image, imagedir+"/images/"+str(id)+'_'+targetfile)
-				# try:
-				# 	imageType = downloadImage(image, imagedir+"/images/"+str(id)+'_'+targetfile)
-				# except IOError:
-				# 	print "Delaying for server to catch up..."
-				# 	time.sleep(5)
-				# 	try:
-				# 		imageType = downloadImage(image, imagedir+"/images/"+str(id)+'_'+targetfile)
-				# 	except IOError:
-				# 		print "Image download failed, skipping..."
 				if imageType!="NotAnImage":
 					if imageType!=None:
 						imageQuery = (image, str(id)+'_'+targetfile+"."+imageType)
@@ -267,9 +259,12 @@ def downloadImage(imageURL, targetFile):
 	imageData = urlc.read()
 	imageType = imghdr.what(None, imageData)
 	if imageType!=None:
-		imageFile = open(targetFile+"."+imageType, 'w')
-		imageFile.write(imageData)
-		imageFile.close()
+		if os.path.isfile(targetFile+"."+imageType)==False:
+			imageFile = open(targetFile+"."+imageType, 'w')
+			imageFile.write(imageData)
+			imageFile.close()
+		else:
+			print "Skipping "+targetFile+"."+imageType+", file already exists"
 	return imageType
 
 #Takes in a subs database and adds all feeds to feed databases and optionally downloads images
@@ -299,7 +294,7 @@ def updateAllFeeds(subsDb, rssToolDir, cacheImages):
 	print ""
 
 #Takes in a subs database and checks all feed dbs for broken image entries
-def checkAllFeedDbImages(subsDb, rssToolDir, cacheImages):
+def checkAllFeedDbImages(subsDb, rssToolDir):
 	db = subsDb.cursor()
 	feeds = db.execute('SELECT * FROM feeds').fetchall()
 	for feed in feeds:
@@ -428,3 +423,68 @@ def pullFeedFromReadability(feedXML, feedDb, rssToolDir, cacheImages, apikey):
 				entry["alternate"] = []
 				entry["alternate"].append(alt)
 				addEntryToFeedDb(feedXML, feedDb, entry, cacheImages, rssToolDir, "posts_full")
+			else:
+				entry = {}
+				entry["content"] = {}
+				entry["content"]["content"] = post[5]
+				entry["title"] = post[1]
+				entry["updated"] = time.mktime(datetime.strptime(post[4], '%Y-%m-%d %H:%M:%S').timetuple())
+				entry["published"] = time.mktime(datetime.strptime(post[3], '%Y-%m-%d %H:%M:%S').timetuple())
+				alt = {}
+				alt["href"] = post[2]
+				entry["alternate"] = []
+				entry["alternate"].append(alt)
+				addEntryToFeedDb(feedXML, feedDb, entry, cacheImages, rssToolDir, "posts_full")
+
+#Takes in a subs database and pulls all non-full feeds from Readability
+def pullFeedsFromReadability(subsDb, rssToolDir, cacheImages, apikey):
+	db = subsDb.cursor()
+	feeds = db.execute('SELECT * FROM feeds').fetchall()
+	addedFeeds = []
+	for feed in feeds:
+		#print "Pulling new posts from "+feed[0]+" from Readability."
+		if feed[3]==0:
+			feedDb = openFeedDb(feed[0], rssToolDir)
+			pullFeedFromReadability(feed[0], feedDb, rssToolDir, cacheImages, apikey)
+			print feed[0]
+
+#Main method takes in settings.json file and runs according to given arguments
+def main(argv):
+	defaultSettingsFile = True
+	settings = {}
+	tasks = []
+	#read args
+	for arg in argv:
+		flag = arg.split("=")
+		if flag[0] == "settings":
+			defaultSettingsFile = False
+			jd = open(flag[1]).read()
+			settings = json.loads(jd)
+		if flag[0] == "update":
+			tasks.append("update")
+		if flag[0] == "addsubs":
+			tasks.append("addsubs")
+		if flag[0] == "checkimages":
+			tasks.append("checkimages")
+		if flag[0] == "readability":
+			tasks.append("readability")
+	#load default settings if needed
+	if defaultSettingsFile==True:
+		jd = open("settings.json").read()
+		settings = json.loads(jd)
+	#run assigned tasks
+	for task in tasks:
+		if task=="addsubs":
+			createSubsDbFromOPML(settings["opml"], settings["rootdir"])		
+		if task=="update":
+			subsDb = openSubsDb(settings["rootdir"])
+			updateAllFeeds(subsDb, settings["rootdir"], settings["cacheimages"])
+		if task=="checkimages":
+			subsDb = openSubsDb(settings["rootdir"])
+			checkAllFeedDbImages(subsDb, settings["rootdir"])
+		if task=="readability":
+			subsDb = openSubsDb(settings["rootdir"])
+			pullFeedsFromReadability(subsDb, settings["rootdir"], settings["cacheimages"], settings["readabilityapikey"])
+
+if  __name__ =='__main__':
+    main(sys.argv[1:])
