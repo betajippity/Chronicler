@@ -494,6 +494,9 @@ def main(argv):
 			settings["checkimages"] = overrides["checkimages"]
 		if overrides.has_key("readabilityapikey"):
 			settings["readabilityapikey"] = overrides["readabilityapikey"]
+	#check rootdir path
+	if settings["rootdir"][:-1]!="/":
+		settings["rootdir"] = settings["rootdir"]+"/"
 	#run assigned tasks
 	for task in tasks:
 		if task == "addsubs":
