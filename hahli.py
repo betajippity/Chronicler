@@ -453,6 +453,7 @@ def main(argv):
 	defaultSettingsFile = True
 	settings = {}
 	tasks = []
+	overrides = {}
 	#read args
 	for arg in argv:
 		flag = arg.split("=")
@@ -468,21 +469,42 @@ def main(argv):
 			tasks.append("checkimages")
 		if flag[0] == "readability":
 			tasks.append("readability")
+		if flag[0] == "readabilityapikey":
+			overrides["readabilityapikey"] = flag[1]
+		if flag[0] == "opml":
+			overrides["opml"] = flag[1]
+		if flag[0] == "rootdir":
+			overrides["rootdir"] = flag[1]
+		if flag[0] == "cacheimages":
+			if flag[1] == True:
+				overrides["cacheimages"] = True;
+			else:
+				overrides["cacheimages"] = False;
 	#load default settings if needed
 	if defaultSettingsFile==True:
 		jd = open("settings.json").read()
 		settings = json.loads(jd)
+	#apply settings overrides
+	if len(overrides)>0:
+		if overrides.has_key("opml"):
+			settings["opml"] = overrides["opml"]
+		if overrides.has_key("rootdir"):
+			settings["rootdir"] = overrides["rootdir"]
+		if overrides.has_key("checkimages"):
+			settings["checkimages"] = overrides["checkimages"]
+		if overrides.has_key("readabilityapikey"):
+			settings["readabilityapikey"] = overrides["readabilityapikey"]
 	#run assigned tasks
 	for task in tasks:
-		if task=="addsubs":
+		if task == "addsubs":
 			createSubsDbFromOPML(settings["opml"], settings["rootdir"])		
-		if task=="update":
+		if task == "update":
 			subsDb = openSubsDb(settings["rootdir"])
 			updateAllFeeds(subsDb, settings["rootdir"], settings["cacheimages"])
-		if task=="checkimages":
+		if task == "checkimages":
 			subsDb = openSubsDb(settings["rootdir"])
 			checkAllFeedDbImages(subsDb, settings["rootdir"])
-		if task=="readability":
+		if task == "readability":
 			subsDb = openSubsDb(settings["rootdir"])
 			pullFeedsFromReadability(subsDb, settings["rootdir"], settings["cacheimages"], settings["readabilityapikey"])
 
