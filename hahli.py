@@ -346,8 +346,8 @@ def pullEntryFromReadability(apikey, url):
 	article = json.loads(urllib.urlopen(apiCall).read())
 	confidence = json.loads(urllib.urlopen(confidenceCall).read())
 	print "Pulling from Readability: "+url 
-	if float(confidence["confidence"])<.99:
-		print "Error: article confidence is below 99% ("+url+"); Confidence: "+str(confidence["confidence"])
+	if float(confidence["confidence"])<.49:
+		print "Error: article confidence is below 50% ("+url+"); Confidence: "+str(confidence["confidence"])
 		return "ReadabilityFailed"
 	return article
 
@@ -383,12 +383,19 @@ def updateFeed(feedXML, feedDb, rssToolDir, cacheImages):
 				entry["title"] = post["title"]
 			entry["updated"]=""
 			if post["updated_parsed"]==None:
-				entry["updated"] = time.mktime(post["published_parsed"])
+				if post["published_parsed"]==None:
+					entry["updated"] = time.time()
+				else:
+					entry["updated"] = time.mktime(post["published_parsed"])
 			else:
 				entry["updated"] = time.mktime(post["updated_parsed"])
 			entry["published"] = entry["updated"]
 			if(post.has_key("published_parsed")):
-				entry["published"] = time.mktime(post["published_parsed"])
+				if post["published_parsed"]==None:
+					entry["published"] = time.time()
+					print "Warning: post has no published time, defaulting to current time."
+				else:
+					entry["published"] = time.mktime(post["published_parsed"])
 
 			alt = {}
 			alt["href"] = post["link"]
