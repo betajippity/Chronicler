@@ -6,7 +6,7 @@ About
 
 A simple RSS archiving tool. Adds in feeds from OPML files and pulls all posts from given feeds into SQLite databases. Can also optionally download images and expand truncated feed contents with Readability.
 
-Written as a fun little exercise in one afternoon, so don't expect it to be terribly cleverly written or appropriate for actual use. I'm also a rendering/graphics guy, not a web guy, so doubly don't expect this to be terribly clever.
+Written as a fun little exercise in one afternoon, so don't expect it to be terribly well written or appropriate for actual use. I'm also a rendering/graphics guy, not a web guy, so doubly don't expect this to be terribly clever.
 
 Requirements
 ------------

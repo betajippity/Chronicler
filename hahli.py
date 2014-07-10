@@ -53,7 +53,7 @@ def downloadFeedArchiveFromGReader(feedXML, rssToolDir):
 	if os.path.exists(rssToolDir+'feeds') == False:
 		os.makedirs(rssToolDir+'feeds')
 	#process URLs and filenames, make subdir for feed if necessary
-	xmlfilename = feedXML.replace('http://','').replace('/','_')
+	xmlfilename = feedXML.replace('http://','').replace('https://','').replace('/','_')
 	if xmlfilename[-1]=='_':
 		xmlfilename = xmlfilename[:-1]
 	if os.path.exists(rssToolDir+'feeds/'+xmlfilename) == False:
@@ -129,7 +129,7 @@ class imgParse(HTMLParser):
 #Opens or creates a feed database in the current rssToolDir directory
 def openFeedDb(feedXML, rssToolDir):
 	#create subdir for feed if necessary
-	xmlfilename = feedXML.replace('http://','').replace('/','_')
+	xmlfilename = feedXML.replace('http://','').replace('https://','').replace('/','_')
 	if xmlfilename[-1]=='_':
 		xmlfilename = xmlfilename[:-1]
 	if os.path.exists(rssToolDir+'feeds/'+xmlfilename) == False:
@@ -149,7 +149,7 @@ def addArchiveToFeedDb(feedXML, rssToolDir, cacheImages):
 	#get our feed database
 	feedDb = openFeedDb(feedXML, rssToolDir)
 	#get our archive json
-	xmlfilename = feedXML.replace('http://','').replace('/','_')
+	xmlfilename = feedXML.replace('http://','').replace('https://','').replace('/','_')
 	if xmlfilename[-1]=='_':
 		xmlfilename = xmlfilename[:-1]
 	if os.path.isfile(rssToolDir+"feeds/"+xmlfilename+"/archive.json") == True:
@@ -165,11 +165,11 @@ def addArchiveToFeedDb(feedXML, rssToolDir, cacheImages):
 	feedDb.close()
 
 
-def addArchiveEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolDir):
-	return addEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolDir, "posts")
+def addArchiveEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolDir, isFb):
+	return addEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolDir, "posts", isFb)
 
 #Adds a Google Reader archive entry as a post to a feed database. Optionally will download images too if cacheImages is true
-def addEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolDir, table):
+def addEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolDir, table, isFb):
 	dbc = feedDb.cursor()
 	post = ""
 	if archiveEntry.has_key("content"):
@@ -212,7 +212,17 @@ def addEntryToFeedDb(feedXML, feedDb, archiveEntry, cacheImages, rssToolDir, tab
 				image = urllib.unquote(image)
 				targetfile = image.rpartition('/')[2]
 				targetfile = str(j)
-				imageType = downloadImage(image, imagedir+"/images/"+str(id)+'_'+targetfile)
+				#if image is from Facebook, handle specially
+				sourceimage = image
+				if isFb==True:
+					fbimage = image
+					fbimage = fbimage.replace('s130x130/','').replace('p130x130/','')
+					fbimage = fbimage.replace('https://','http://')
+					if "url=" in fbimage:
+						fbimage = fbimage.split("url=")[1]
+					sourceimage = fbimage
+				imageType = downloadImage(sourceimage, imagedir+"/images/"+str(id)+'_'+targetfile)
+				#add image info to db
 				if imageType!="NotAnImage":
 					if imageType!=None:
 						imageQuery = (image, str(id)+'_'+targetfile+"."+imageType)
@@ -258,13 +268,16 @@ def downloadImage(imageURL, targetFile):
 		return "NotAnImage"
 	imageData = urlc.read()
 	imageType = imghdr.what(None, imageData)
-	if imageType!=None:
-		if os.path.isfile(targetFile+"."+imageType)==False:
-			imageFile = open(targetFile+"."+imageType, 'w')
-			imageFile.write(imageData)
-			imageFile.close()
-		else:
-			print "Skipping "+targetFile+"."+imageType+", file already exists"
+	if imageType==None:
+		print "Warning: no image type for " + imageURL
+		imageType = "jpg"
+	# if imageType!=None:
+	if os.path.isfile(targetFile+"."+imageType)==False:
+		imageFile = open(targetFile+"."+imageType, 'w')
+		imageFile.write(imageData)
+		imageFile.close()
+	else:
+		print "Skipping "+targetFile+"."+imageType+", file already exists"
 	return imageType
 
 #Takes in a subs database and adds all feeds to feed databases and optionally downloads images
@@ -283,7 +296,11 @@ def updateAllFeeds(subsDb, rssToolDir, cacheImages):
 	for feed in feeds:
 		print "Adding new posts from "+feed[0]+" to feed database."
 		feedDb = openFeedDb(feed[0], rssToolDir)
-		updates = updateFeed(feed[0], feedDb, rssToolDir, cacheImages)
+		#check if feed is a Facebook feed; if so, images need to be handled specially
+		isFb = False
+		if "https://www.facebook.com" in feed[0]:
+			isFb = True
+		updates = updateFeed(feed[0], feedDb, rssToolDir, cacheImages, isFb)
 		if updates>0:
 			addedFeeds.append("Added "+str(updates)+" new posts to "+feed[0])
 		feedDb.close()
@@ -307,7 +324,7 @@ def checkAllFeedDbImages(subsDb, rssToolDir):
 def checkFeedDbImages(feedXML, feedDb, subsDb, rssToolDir):
 	images = feedDb.execute('SELECT * FROM images ORDER BY rowid').fetchall()
 	for image in images:
-		xmlfilename = feedXML.replace('http://','').replace('/','_')
+		xmlfilename = feedXML.replace('http://','').replace('https://','').replace('/','_')
 		if xmlfilename[-1]=='_':
 			xmlfilename = xmlfilename[:-1]
 		imagePath = rssToolDir+"feeds/"+xmlfilename+"/images/"+image[1]
@@ -351,7 +368,7 @@ def pullEntryFromReadability(apikey, url):
 		return "ReadabilityFailed"
 	return article
 
-def updateFeed(feedXML, feedDb, rssToolDir, cacheImages):
+def updateFeed(feedXML, feedDb, rssToolDir, cacheImages, isFb):
 	feed = feedparser.parse(feedXML)
 	entries = {}
 	
@@ -402,7 +419,7 @@ def updateFeed(feedXML, feedDb, rssToolDir, cacheImages):
 			entry["alternate"] = []
 			entry["alternate"].append(alt)
 			#print entry["content"]["content"]
-			if addArchiveEntryToFeedDb(feedXML, feedDb, entry, cacheImages, rssToolDir)==0:
+			if addArchiveEntryToFeedDb(feedXML, feedDb, entry, cacheImages, rssToolDir, isFb)==0:
 				i=i+1
 		print "Added " + str(i) + " new posts to feed " + feedXML
 		return i
